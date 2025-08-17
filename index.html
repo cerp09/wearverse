@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>HS Smart Wearverse – 3D Try-on Demo (Fixed)</title>
+  <title>HS Smart Wearverse – 3D Try-on (Safe Build)</title>
   <style>
-    html, body { margin:0; height:100%; background:#0b1320; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", "Helvetica Neue", Arial; }
+    html, body { margin:0; height:100%; background:#0b1320; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", Arial; }
     #app { position:relative; height:100%; }
     canvas { display:block; }
     .panel {
@@ -23,6 +23,7 @@
     .footer { margin-top:8px; font-size:11px; color:#6b7280; text-align:right; }
     .btn { width:100%; margin-top:8px; padding:10px 12px; border-radius:12px; border:0; background:#111827; color:#fff; font-weight:600; cursor:pointer; }
     .btn:active { transform: translateY(1px); }
+    .err { position:absolute; left:12px; bottom:12px; right:312px; color:#fecaca; font-size:12px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     .debug-tip { position:absolute; left:12px; bottom:10px; color:#9CA3AF; font-size:12px; }
   </style>
 </head>
@@ -62,190 +63,141 @@
     <div class="footer">旋轉：拖曳 · 縮放：滾輪</div>
   </div>
   <div class="debug-tip">?debug=1 可切換偵錯著色</div>
+  <div class="err" id="err"></div>
 
-  <script type="module">
-    import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
-    import { OrbitControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+  <!-- Use non-module builds to avoid ESM/CORS issues -->
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+  <script>
+  (function(){
+    const err = (m)=>{ const el=document.getElementById('err'); el.textContent = m; console.error(m); };
+    try {
+      const DEBUG = new URLSearchParams(location.search).get('debug') === '1';
 
-    const params = new URLSearchParams(location.search);
-    const DEBUG = params.get("debug") === "1";
+      // --- 基本場景 ---
+      const app = document.getElementById('app');
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0b1320);
 
-    // --- 基本場景 ---
-    const app = document.getElementById("app");
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0b1320);
+      const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 100);
+      camera.position.set(0, 2, 8);
 
-    const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 100);
-    camera.position.set(0, 2, 8); // 拉遠，保證看得到
-    const renderer = new THREE.WebGLRenderer({ antialias:true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    app.appendChild(renderer.domElement);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.target.set(0, 1.6, 0);
-    controls.update();
-
-    // 光源（加強環境光）
-    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x334155, 0.5);
-    scene.add(hemi);
-    const dir = new THREE.DirectionalLight(0xffffff, 1.0);
-    dir.position.set(3, 6, 3);
-    dir.castShadow = true;
-    scene.add(dir);
-
-    // 地面
-    const ground = new THREE.Mesh(
-      new THREE.CylinderGeometry(10, 10, 0.1, 64),
-      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 1 })
-    );
-    ground.receiveShadow = true;
-    ground.position.y = -0.05;
-    scene.add(ground);
-
-    // --- 材質（DEBUG 可切換 MeshNormalMaterial） ---
-    const skin = DEBUG
-      ? new THREE.MeshNormalMaterial()
-      : new THREE.MeshStandardMaterial({ color: 0xd6b79b, roughness: 0.9, metalness: 0 });
-
-    const shirtMat = DEBUG
-      ? new THREE.MeshNormalMaterial()
-      : new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0.05 });
-
-    // --- 建立中性假人（無裸露細節） ---
-    const mannequin = new THREE.Group();
-
-    // 軀幹
-    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, 1.45, 24), skin);
-    torso.castShadow = true;
-    torso.position.y = 1.6;
-    mannequin.add(torso);
-
-    // 頭
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.35, 24, 16), skin);
-    head.position.y = 2.6;
-    head.castShadow = true;
-    mannequin.add(head);
-
-    // 手臂
-    function armMesh(side = 1) {
-      const a = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 1.1, 16), skin);
-      a.castShadow = true;
-      a.position.set(0.9*side, 1.55, 0);
-      a.rotation.z = -0.35*side;
-      return a;
-    }
-    mannequin.add(armMesh(1), armMesh(-1));
-
-    // 腿
-    function legMesh(side = 1) {
-      const l = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.25, 1.35, 18), skin);
-      l.castShadow = true;
-      l.position.set(0.28*side, 0.7, 0);
-      return l;
-    }
-    mannequin.add(legMesh(1), legMesh(-1));
-
-    scene.add(mannequin);
-
-    // --- 衣服組件（可換色/袖長/領口/尺寸） ---
-    const shirtGroup = new THREE.Group();
-    scene.add(shirtGroup);
-
-    // 主衣身
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.60, 0.75, 1.48, 32), shirtMat);
-    body.position.y = 1.6;
-    body.castShadow = true;
-    shirtGroup.add(body);
-
-    // 領口（crew）
-    const crewNeck = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.035, 16, 64), shirtMat);
-    crewNeck.rotation.x = Math.PI/2;
-    crewNeck.position.set(0, 2.18, 0.03);
-    shirtGroup.add(crewNeck);
-
-    // V 領（線條裝飾）
-    const vGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-0.18, 0.12, 0.26),
-      new THREE.Vector3( 0.00,-0.06, 0.29),
-      new THREE.Vector3( 0.18, 0.12, 0.26),
-    ]);
-    const vNeck = new THREE.Line(vGeo, new THREE.LineBasicMaterial({ color: 0x111111, linewidth: 3 }));
-    vNeck.position.y = 2.12;
-    vNeck.visible = false;
-    shirtGroup.add(vNeck);
-
-    // 袖子
-    const sleeves = new THREE.Group();
-    shirtGroup.add(sleeves);
-
-    function buildSleeves(type="short") {
-      sleeves.clear();
-      const isShort = type === "short";
-      const len = isShort ? 0.42 : 1.05;
-      function sleeve(side=1) {
-        const s = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, len, 18), shirtMat);
-        s.castShadow = true;
-        s.position.set(0.92*side, 1.58, 0);
-        s.rotation.z = -0.35*side;
-        s.position.x += 0.05*side;
-        return s;
-      }
-      sleeves.add(sleeve(1), sleeve(-1));
-    }
-    buildSleeves("short");
-
-    // 尺寸縮放
-    const sizeScale = { S: 0.97, M: 1.00, L: 1.06 };
-    function applySize(sz="M"){
-      const k = sizeScale[sz] ?? 1.0;
-      shirtGroup.scale.set(k, 1.0, k);
-    }
-    applySize("M");
-
-    // UI 綁定
-    const $sleeve = document.getElementById("sleeve");
-    const $neck   = document.getElementById("neck");
-    const $color  = document.getElementById("color");
-    const $size   = document.getElementById("size");
-    const $sync   = document.getElementById("sync");
-
-    function syncUI(){
-      if (!DEBUG) shirtMat.color = new THREE.Color($color.value);
-      buildSleeves($sleeve.value);
-      const isV = ($neck.value === "v");
-      vNeck.visible = isV;
-      crewNeck.visible = !isV;
-      applySize($size.value);
-    }
-    $sync.addEventListener("click", syncUI);
-
-    // 視窗縮放
-    function onResize(){
-      camera.aspect = window.innerWidth/window.innerHeight;
-      camera.updateProjectionMatrix();
+      const renderer = new THREE.WebGLRenderer({ antialias:true });
       renderer.setSize(window.innerWidth, window.innerHeight);
-    }
-    window.addEventListener("resize", onResize);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      app.appendChild(renderer.domElement);
 
-    // 座標輔助（幫助對焦）
-    const axes = new THREE.AxesHelper(1.5);
-    axes.visible = DEBUG;    // 只在 debug 模式顯示
-    scene.add(axes);
-
-    // 動畫
-    let t = 0;
-    function animate(){
-      requestAnimationFrame(animate);
+      const controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.target.set(0, 1.6, 0);
       controls.update();
-      t += 0.005;
-      mannequin.rotation.y = Math.sin(t)*0.02;
-      shirtGroup.rotation.y = mannequin.rotation.y;
-      renderer.render(scene, camera);
+
+      // 光源
+      scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+      const hemi = new THREE.HemisphereLight(0xffffff, 0x334155, 0.5);
+      scene.add(hemi);
+      const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+      dir.position.set(3, 6, 3);
+      dir.castShadow = true;
+      scene.add(dir);
+
+      // 地面
+      const ground = new THREE.Mesh(
+        new THREE.CylinderGeometry(10, 10, 0.1, 64),
+        new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 1 })
+      );
+      ground.receiveShadow = true;
+      ground.position.y = -0.05;
+      scene.add(ground);
+
+      // 材質
+      const skin = DEBUG
+        ? new THREE.MeshNormalMaterial()
+        : new THREE.MeshStandardMaterial({ color: 0xd6b79b, roughness: 0.9, metalness: 0 });
+      const shirtMat = DEBUG
+        ? new THREE.MeshNormalMaterial()
+        : new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0.05 });
+
+      // 假人
+      const mannequin = new THREE.Group();
+      const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, 1.45, 24), skin);
+      torso.castShadow = true; torso.position.y = 1.6; mannequin.add(torso);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.35, 24, 16), skin);
+      head.position.y = 2.6; head.castShadow = true; mannequin.add(head);
+      function armMesh(side){ const a = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 1.1, 16), skin);
+        a.castShadow = true; a.position.set(0.9*side, 1.55, 0); a.rotation.z = -0.35*side; return a; }
+      function legMesh(side){ const l = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.25, 1.35, 18), skin);
+        l.castShadow = true; l.position.set(0.28*side, 0.7, 0); return l; }
+      mannequin.add(armMesh(1), armMesh(-1), legMesh(1), legMesh(-1));
+      scene.add(mannequin);
+
+      // 衣服
+      const shirtGroup = new THREE.Group(); scene.add(shirtGroup);
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.60, 0.75, 1.48, 32), shirtMat);
+      body.position.y = 1.6; body.castShadow = true; shirtGroup.add(body);
+      const crewNeck = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.035, 16, 64), shirtMat);
+      crewNeck.rotation.x = Math.PI/2; crewNeck.position.set(0, 2.18, 0.03); shirtGroup.add(crewNeck);
+      const vGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-0.18, 0.12, 0.26),
+        new THREE.Vector3( 0.00,-0.06, 0.29),
+        new THREE.Vector3( 0.18, 0.12, 0.26),
+      ]);
+      const vNeck = new THREE.Line(vGeo, new THREE.LineBasicMaterial({ color: 0x111111 }));
+      vNeck.position.y = 2.12; vNeck.visible = false; shirtGroup.add(vNeck);
+
+      const sleeves = new THREE.Group(); shirtGroup.add(sleeves);
+      function clearGroup(g){ while(g.children.length){ g.remove(g.children[0]); } }
+      function buildSleeves(type){
+        clearGroup(sleeves);
+        const isShort = (type === 'short'); const len = isShort ? 0.42 : 1.05;
+        function sleeve(side){
+          const s = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, len, 18), shirtMat);
+          s.castShadow = true; s.position.set(0.92*side, 1.58, 0); s.rotation.z = -0.35*side; s.position.x += 0.05*side;
+          return s;
+        }
+        sleeves.add(sleeve(1), sleeve(-1));
+      }
+      buildSleeves('short');
+
+      const sizeScale = { S:0.97, M:1.00, L:1.06 };
+      function applySize(sz){ const k = sizeScale[sz] || 1.0; shirtGroup.scale.set(k, 1.0, k); }
+      applySize('M');
+
+      // UI
+      const $sleeve = document.getElementById('sleeve');
+      const $neck   = document.getElementById('neck');
+      const $color  = document.getElementById('color');
+      const $size   = document.getElementById('size');
+      const $sync   = document.getElementById('sync');
+      $sync.addEventListener('click', function(){
+        if(!DEBUG){ shirtMat.color = new THREE.Color($color.value); }
+        buildSleeves($sleeve.value);
+        const isV = ($neck.value === 'v'); vNeck.visible = isV; crewNeck.visible = !isV;
+        applySize($size.value);
+      });
+
+      // 座標輔助（debug）
+      const axes = new THREE.AxesHelper(1.5); axes.visible = DEBUG; scene.add(axes);
+
+      // 事件
+      window.addEventListener('resize', function(){
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      // 動畫
+      let t = 0;
+      (function animate(){
+        requestAnimationFrame(animate);
+        controls.update(); t += 0.005;
+        mannequin.rotation.y = Math.sin(t)*0.02; shirtGroup.rotation.y = mannequin.rotation.y;
+        renderer.render(scene, camera);
+      })();
+    } catch (e) {
+      err('[Init Error] ' + (e && e.message ? e.message : e));
     }
-    animate();
+  })();
   </script>
 </body>
 </html>
